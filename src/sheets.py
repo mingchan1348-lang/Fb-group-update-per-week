@@ -1,35 +1,25 @@
-import json
 import os
 from typing import Dict, List
 
-import gspread
-from google.oauth2.service_account import Credentials
+import requests
 
 
-SHEET_NAME = "posts"
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-
-
-def worksheet():
-    raw_credentials = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
-    credentials = Credentials.from_service_account_info(
-        json.loads(raw_credentials), scopes=SCOPES
+def _request(payload: Dict) -> Dict:
+    response = requests.post(
+        os.environ["GAS_WEB_APP_URL"],
+        json={"secret": os.environ["GAS_SHARED_SECRET"], **payload},
+        timeout=30,
     )
-    client = gspread.authorize(credentials)
-    return client.open_by_key(os.environ["GOOGLE_SHEET_ID"]).worksheet(SHEET_NAME)
+    response.raise_for_status()
+    result = response.json()
+    if not result.get("ok"):
+        raise RuntimeError(result.get("error", "Google Sheet request failed"))
+    return result
 
 
 def all_rows() -> List[Dict[str, str]]:
-    return worksheet().get_all_records()
+    return _request({"action": "list"})["rows"]
 
 
 def update_row(row_number: int, changes: Dict[str, str]) -> None:
-    sheet = worksheet()
-    headers = sheet.row_values(1)
-    updates = []
-    for field, value in changes.items():
-        if field not in headers:
-            raise ValueError(f"Missing required column: {field}")
-        column = headers.index(field) + 1
-        updates.append({"range": gspread.utils.rowcol_to_a1(row_number, column), "values": [[value]]})
-    sheet.batch_update(updates)
+    _request({"action": "update", "row_number": row_number, "changes": changes})
